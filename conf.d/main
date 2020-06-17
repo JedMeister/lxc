@@ -28,7 +28,8 @@ net.ipv4.tcp_fin_timeout = 15
 EOF
 
 # change webshell and webmin listening ports in stunnel4
-sed -i 's|^\(accept *= *\)1\(232[01]\)|\12\2|g' /etc/stunnel/stunnel.conf
+sed -i 's|^\(accept *= *\)1\(232[01]\)|\12\2|g' /etc/stunnel/webmin.conf
+sed -i 's|^\(accept *= *\)1\(232[01]\)|\12\2|g' /etc/stunnel/shellinabox.conf
 
 # remove ssl certificates from ssl include
 # allow nginx proxy to use container certs and keys
