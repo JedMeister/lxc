@@ -27,10 +27,6 @@ net.ipv4.tcp_fin_timeout = 15
 #
 EOF
 
-# change webshell and webmin listening ports in stunnel4
-sed -i 's|^\(accept *= *\)1\(232[01]\)|\12\2|g' /etc/stunnel/webmin.conf
-sed -i 's|^\(accept *= *\)1\(232[01]\)|\12\2|g' /etc/stunnel/shellinabox.conf
-
 # remove ssl certificates from ssl include
 # allow nginx proxy to use container certs and keys
 sed -i "/^ssl_certificate.*/ d" /etc/nginx/include/ssl
@@ -43,8 +39,8 @@ sed -i "s|MainInterface|MainInterface\nBindAddress: localhost|" $CONF
 sed -i "/bugs.debian.org:443/ a PassThroughPattern: .*" $CONF
 
 # disable stunnel and use nginx instead
-service stunnel4 stop
-update-rc.d stunnel4 disable
+systemctl disable stunnel4@webmin.service --now
+systemctl disable stunnel4@shellinabox.service --now
 
 # copy sysv init script to systemd autostart helper
 cp /etc/init.d/lxc /usr/lib/x86_64-linux-gnu/lxc/lxc-autostart-helper
