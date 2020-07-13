@@ -42,6 +42,15 @@ sed -i "/bugs.debian.org:443/ a PassThroughPattern: .*" $CONF
 systemctl disable stunnel4@webmin.service --now
 systemctl disable stunnel4@shellinabox.service --now
 
+# Enable nat by default
+DEFAULT_CONF = /etc/lxc/default.conf
+sed -i "\|^lxc.net.*type = empty|s|^|#|" $DEFAULT_CONF
+cat >> $DEFAULT_CONF << EOF
+
+# [tkl] use nat bridge by default
+lxc.include = /etc/lxc/natbridge.conf
+EOF
+
 # copy sysv init script to systemd autostart helper
 cp /etc/init.d/lxc /usr/lib/x86_64-linux-gnu/lxc/lxc-autostart-helper
 
