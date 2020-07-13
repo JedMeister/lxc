@@ -37,6 +37,8 @@
 # Example:
 # lxc-create -n CONTAINER_NAME -f CONFIG_FILE -t turnkey -- APPNAME [template options]
 
+[[ -n "$LXC_DEBUG" ]] && set -x
+
 # Detect use under userns (unsupported)
 for arg in "$@"; do
     [ "$arg" = "--" ] && break
@@ -226,36 +228,49 @@ verify_signature() {
     local location="$1"
     local image="$2"
     local signature="$3"
-    local keyid="A16EB94D"
-    local keyring="/etc/apt/trusted.gpg.d/turnkey.gpg"
+
+    case ${deb_release} in
+        jessie|stretch)
+            local keyring="/etc/apt/trusted.gpg.d/turnkey.gpg"
+            local legacy_key=y;;
+        *)
+            local keyfile="tkl-${deb_release}-images.asc"
+            local keyring="/usr/share/keyrings/tkl-${deb_release}-images.gpg";;
+    esac
+
+    if [ ! -f "${keyring}" ] && [ -z "${legacy_key}" ]; then
+        local url="https://raw.githubusercontent.com/turnkeylinux/common/master/keys"
+        # not sure why, but GitHub was returning error 500 when trying to download key file...
+        download_keyfile=$(curl -sL $url/${keyfile} > /tmp/${keyfile})
+        local tries=0
+        until [ "$tries" -ge 5 ]; do
+            curl -sL $url/${keyfile} > /tmp/${keyfile}
+            if grep -q Error /tmp/${keyfile}; then
+                tries=$((tries+1))
+                sleep 5
+            else
+                gpg --no-default-keyring --keyring ${keyring} --import /tmp/${keyfile}
+                rm /tmp/${keyfile}
+                break
+            fi
+        done
+        [ ! -f "${keyring}" ] && fatal "Unable to download and/or process ${keyfile}"
+    elif [ ! -f "${keyring}" ] && [ -n "${legacy_key}" ]; then
+        fatal "Using legacy key, but keyring '${keyring}' not found. Please download manually."
+    fi
 
     [ ! -f "${location}/${image}" ] && fatal "image ${location}/${image} not found"
     [ ! -f "${location}/${signature}" ] && fatal "signature ${location}/${signature} not found"
 
-    if [[ "${image}" =~ "debian-7" ]]; then
-        info "verifying image..."
-        gpg --keyring ${keyring} --verify ${location}/${signature} ${location}/${image}
-    else
-        info "verifying gpg signature..."
-        gpg --keyring ${keyring} --verify ${location}/${signature}
-        if [ $? -ne 0 ]; then  
-            fatal "${signature} gpg verification failed"
-        fi
+    info "verifying gpg signature..."
+    gpg --keyring ${keyring} --verify ${location}/${signature}
+    [ $? -ne 0 ] && fatal "${signature} gpg verification failed"
 
-        info "verifying checksum..."
-        cd ${location}
-        if [[ "${signature}" =~ ".sig" ]]; then
-            sum=$(grep -A 1 sha1sum ${signature} | tail -n 1 | sed "s/^ *//")
-            echo "${sum} ${image}" | sha1sum --status -c -
-            [ $? -ne 0 ] && fatal "${image} checksum verification failed"
-        elif [[ "${signature}" =~ ".hash" ]]; then
-            sha512sum --status -c "${signature}"
-            [ $? -ne 0 ] && fatal "${image} checksum verification failed"
-        else
-            fatal "${signature} unknown checksum type"
-        fi
-        cd -
-    fi
+    info "verifying checksum..."
+    cd ${location}
+    sha512sum --status -c "${signature}"
+    [ $? -ne 0 ] && fatal "${image} checksum verification failed"
+    cd -
 
     info "verified successfully"
     return 0
@@ -697,24 +712,21 @@ type debootstrap > /dev/null 2>&1
 [ $? -ne 0 ] && fatal "'debootstrap' command is missing"
 
 case "${version}" in
-    12.[0-1]*-squeeze) fatal "turnkey version ${version} is no longer supported:";;
-    13.0*-wheezy)      fatal "turnkey version ${version} is no longer supported:";;
-    14.0*-wheezy)      fatal "turnkey version ${version} is no longer supported:";;
-    14.[1-9]*-jessie)  deb_version="debian-8";;
-    15.[0-9]*-stretch) deb_version="debian-9";;
+    14.[0-9]*-jessie)   fatal "turnkey version ${version} is no longer supported:";;
+    15.[0-9]*-stretch)  deb_version="debian-9";;
+    16.[0-9]*-buster)   deb_version="debian-10";;
+    17.[0-9]*-bullseye) deb_version="debian-11";;
                     *) fatal "turnkey version ${version} is not recognized:"
 esac
 
 tkl_version=$(echo ${version} | cut -d "-" -f 1)
 deb_release=$(echo ${version} | cut -d "-" -f 2)
 
-valid_releases=('wheezy' 'jessie' 'stretch')
+valid_releases=('jessie' 'stretch' 'buster' 'bullseye')
 if [[ ! "${valid_releases[*]}" =~ (^|[^[:alpha:]])${deb_release}([^[:alpha:]]|$) ]]; then
     echo "Invalid release ${deb_release}, valid ones are: ${valid_releases[*]}"
     exit 1
 fi
-
-[ ${arch} = "i386" -a ${tkl_version} != "13.0" ] && fatal "can't create ${arch} container with ${version}"
 
 # detect rootfs
 config="${path}/config"
@@ -727,23 +739,12 @@ if [ -z "${rootfs}" ]; then
     rootfs=${rootfs:-${path}/rootfs}
 fi
 
-if [ "${version}" == "13.0-wheezy" ]; then
-    baseurl="${TURNKEY_MIRROR}/images/openvz"
-else
-    baseurl="${TURNKEY_MIRROR}/images/proxmox"
-fi
-
+baseurl="${TURNKEY_MIRROR}/images/proxmox"
 cache="$LOCALSTATEDIR/cache/lxc/turnkey"
 mkdir -p ${cache}
 
 image=$(get_image_name ${deb_version} ${app_name} ${tkl_version} ${arch})
-
-case "${tkl_version}" in
-    13.0)	signature="${image}.sig";;
-    14.0)	signature="${image}.sig";;
-    14.1)	signature="${image}.sig";;
-       *)	signature="${image}.hash";;
-esac
+signature="${image}.hash"
 
 info "begin creating container ${name}..."
 
